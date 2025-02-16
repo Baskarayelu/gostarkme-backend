@@ -186,7 +186,7 @@ pub mod Fund {
         fn get_donators(self: @ContractState) -> Array<DonatorInfo> {
             let mut donators = array![];
             let mut i: u256 = 1;
-            while i < self
+            while i <= self
                 .total_donators
                 .read() {
                     let donator = self.donation_list.read(i);
