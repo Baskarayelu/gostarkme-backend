@@ -6,20 +6,20 @@ use starknet::syscalls::call_contract_syscall;
 
 use snforge_std::{
     declare, ContractClassTrait, start_cheat_caller_address_global, start_cheat_caller_address,
-    stop_cheat_caller_address, cheat_caller_address, CheatSpan, spy_events, EventSpyAssertionsTrait
+    stop_cheat_caller_address, cheat_caller_address, CheatSpan, spy_events, EventSpyAssertionsTrait,
 };
 
 use openzeppelin::utils::serde::SerializedAppend;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 
 
-use gostarkme::fund::Fund;
+use gostarkme::fund::{DonatorInfo, Fund};
 use gostarkme::fund::IFundDispatcher;
 use gostarkme::fund::IFundDispatcherTrait;
-use gostarkme::constants::{fund_manager::{fund_manager_constants::FundManagerConstants},};
-use gostarkme::constants::{funds::{fund_constants::FundStates},};
-use gostarkme::constants::{funds::{fund_constants::FundTypeConstants},};
-use gostarkme::constants::{starknet::{starknet_constants::StarknetConstants},};
+use gostarkme::constants::{fund_manager::{fund_manager_constants::FundManagerConstants}};
+use gostarkme::constants::{funds::{fund_constants::FundStates}};
+use gostarkme::constants::{funds::{fund_constants::FundTypeConstants}};
+use gostarkme::constants::{starknet::{starknet_constants::StarknetConstants}};
 
 const ONE_E18: u256 = 1000000000000000000_u256;
 fn ID() -> u128 {
@@ -270,11 +270,11 @@ fn test_new_vote_received_event_emitted_successful() {
                     contract_address,
                     Fund::Event::NewVoteReceived(
                         Fund::NewVoteReceived {
-                            voter: OTHER_USER(), fund: contract_address, votes: 1
-                        }
-                    )
-                )
-            ]
+                            voter: OTHER_USER(), fund: contract_address, votes: 1,
+                        },
+                    ),
+                ),
+            ],
         );
 }
 
@@ -292,7 +292,7 @@ fn test_set_reason_unauthorized() {
 fn test_withdraw_with_wrong_owner() {
     let contract_address = _setup_();
 
-    // call withdraw fn with wrong owner 
+    // call withdraw fn with wrong owner
     start_cheat_caller_address_global(OTHER_USER());
     IFundDispatcher { contract_address }.withdraw();
 }
@@ -370,11 +370,11 @@ fn test_withdraw() {
 
     assert(
         owner_balance_after == (owner_balance_before + withdrawn_amount),
-        'wrong owner balance after'
+        'wrong owner balance after',
     );
     assert(
         (fund_balance_before - (withdrawn_amount + fund_manager_amount)) == fund_balance_after,
-        'wrong fund balance'
+        'wrong fund balance',
     );
     assert(token_dispatcher.balance_of(VALID_ADDRESS_1()) == fund_manager_amount, 'wrong balance');
 }
@@ -500,10 +500,10 @@ fn test_update_received_donation() {
                             donated_strks: strks,
                             donator_address: VALID_ADDRESS_1(),
                             fund_contract_address: contract_address,
-                        }
-                    )
-                )
-            ]
+                        },
+                    ),
+                ),
+            ],
         );
 }
 
@@ -563,11 +563,11 @@ fn test_emit_event_donation_withdraw() {
                         Fund::DonationWithdraw {
                             owner_address: OWNER(),
                             fund_contract_address: contract_address,
-                            withdrawn_amount
-                        }
-                    )
-                )
-            ]
+                            withdrawn_amount,
+                        },
+                    ),
+                ),
+            ],
         );
 }
 
@@ -669,7 +669,8 @@ fn test_donator_registration_and_subsequent_donations() {
     let initial_check = fund_contract.get_single_donator_by_address(OWNER());
 
     assert(
-        initial_check.donator_amount == INITIAL_DONATION().into(), 'Initial donation should be zero'
+        initial_check.donator_amount == INITIAL_DONATION().into(),
+        'Initial donation should be zero',
     );
 
     fund_contract.update_receive_donation(initial_donation);
@@ -684,4 +685,232 @@ fn test_donator_registration_and_subsequent_donations() {
     let final_recorded_donation = fund_contract.get_single_donator_by_address(OWNER());
 
     assert(final_recorded_donation.donator_amount == total_donation, 'Total donation mismatch');
+}
+
+#[test]
+fn test_get_donators_empty() {
+    start_cheat_caller_address_global(OWNER());
+    let contract_address = _setup_();
+    let fund_contract = IFundDispatcher { contract_address };
+
+    // Donators Array should be empty
+    let donators = fund_contract.get_donators();
+    assert(donators.is_empty(), 'Donators should be empty');
+}
+
+#[test]
+#[fork("Mainnet")]
+fn test_get_single_donator_single_donation() {
+    start_cheat_caller_address_global(OWNER());
+    let contract_address = _setup_();
+    let fund_contract = IFundDispatcher { contract_address };
+
+    // Single donation
+    let initial_donation: u256 = 100_u256 * ONE_E18;
+    let initial_check = fund_contract.get_single_donator_by_address(OWNER());
+
+    assert(
+        initial_check.donator_amount == INITIAL_DONATION().into(),
+        'Initial donation should be zero',
+    );
+
+    let donators = fund_contract.get_donators();
+    assert(donators.is_empty(), 'Donators should be empty');
+
+    fund_contract.update_receive_donation(initial_donation);
+    let after_initial_donation = fund_contract.get_single_donator_by_address(OWNER());
+
+    assert(after_initial_donation.donator_amount == initial_donation, 'Initial donation not match');
+
+    let donators = fund_contract.get_donators();
+    assert(!donators.is_empty(), 'Donators should not be empty');
+    assert(donators.len() == 1, 'Should be a Donator');
+
+    let donator = donators.at(0);
+    assert(*donator.donator_amount == initial_donation, 'Donator amount mismatch');
+    assert(*donator.donator_address == OWNER(), 'Donator address mismatch');
+    assert(*donator.donator_index == 1, 'Donator index mismatch');
+}
+
+// assert_eq macro is used in this test to help pass messages with enough context
+#[test]
+#[fork("Mainnet")]
+fn test_get_single_donator_multiple_donations() {
+    start_cheat_caller_address_global(OWNER());
+    let contract_address = _setup_();
+    let fund_contract = IFundDispatcher { contract_address };
+
+    // First donation
+    let initial_donation = 100_u256 * ONE_E18;
+    fund_contract.update_receive_donation(initial_donation);
+
+    let donators = fund_contract.get_donators();
+    assert_eq!(donators.len(), 1, "There should be one donator after the first donation");
+
+    let donator = donators.at(0);
+    assert_eq!(
+        *donator.donator_amount, initial_donation, "Donator amount mismatch after first donation"
+    );
+    assert_eq!(*donator.donator_address, OWNER(), "Donator address mismatch after first donation");
+    assert_eq!(*donator.donator_index, 1, "Donator index mismatch after first donation");
+
+    // Second donation
+    let second_donation = 50_u256 * ONE_E18;
+    fund_contract.update_receive_donation(second_donation);
+
+    let donators = fund_contract.get_donators();
+    assert_eq!(donators.len(), 1, "There should still be one donator after the second donation");
+
+    let donator = donators.at(0);
+    assert_eq!(
+        *donator.donator_amount,
+        initial_donation + second_donation,
+        "Donator amount mismatch after second donation"
+    );
+    assert_eq!(*donator.donator_address, OWNER(), "Donator address mismatch after second donation");
+    assert_eq!(*donator.donator_index, 1, "Donator index mismatch after second donation");
+
+    // Third donation (zero amount - should have no effect)
+    let third_donation = 0_u256;
+    fund_contract.update_receive_donation(third_donation);
+
+    let donators = fund_contract.get_donators();
+    assert_eq!(donators.len(), 1, "There should still be one donator after the third donation");
+
+    let donator = donators.at(0);
+    assert_eq!(
+        *donator.donator_amount,
+        initial_donation + second_donation,
+        "Donator amount should not change after zero donation"
+    );
+    assert_eq!(*donator.donator_address, OWNER(), "Donator address mismatch after third donation");
+    assert_eq!(*donator.donator_index, 1, "Donator index mismatch after third donation");
+
+    // Fourth donation
+    let fourth_donation = 250_u256 * ONE_E18;
+    fund_contract.update_receive_donation(fourth_donation);
+
+    let donators = fund_contract.get_donators();
+    assert_eq!(donators.len(), 1, "There should still be one donator after the fourth donation");
+
+    let donator = donators.at(0);
+    assert_eq!(
+        *donator.donator_amount,
+        initial_donation + second_donation + fourth_donation,
+        "Donator amount mismatch after fourth donation"
+    );
+    assert_eq!(*donator.donator_address, OWNER(), "Donator address mismatch after fourth donation");
+    assert_eq!(*donator.donator_index, 1, "Donator index mismatch after fourth donation");
+}
+
+#[test]
+#[fork("Mainnet")]
+fn test_multiple_donators_single_donation() {
+    start_cheat_caller_address_global(OWNER());
+    let contract_address = _setup_();
+    let fund_contract = IFundDispatcher { contract_address };
+
+    let donators_array = array![OWNER(), OTHER_USER(), FUND_MANAGER()].span();
+    let donation_amount = 100_u256 * ONE_E18;
+    let mut i = 0;
+    while i < donators_array
+        .len() {
+            start_cheat_caller_address_global(*donators_array.at(i));
+            fund_contract.update_receive_donation(donation_amount);
+            stop_cheat_caller_address(contract_address);
+            i += 1;
+        };
+
+    // Verify donators array
+    let donators = fund_contract.get_donators().span();
+    assert_eq!(donators.len(), 3, "Should have three donators");
+
+    let mut i = 0;
+    while i < donators
+        .len() {
+            let donator = donators.at(i);
+            assert_eq!(*donator.donator_amount, donation_amount, "Donator {} amount mismatch", i);
+            assert_eq!(
+                *donator.donator_address, *donators_array.at(i), "Donator {} address mismatch", i
+            );
+            assert_eq!(*donator.donator_index, (i + 1).into(), "Donator {} index mismatch", i);
+            i += 1;
+        };
+}
+
+#[test]
+#[fork("Mainnet")]
+fn test_multiple_donators_multiple_donations() {
+    start_cheat_caller_address_global(OWNER());
+    let contract_address = _setup_();
+    let fund_contract = IFundDispatcher { contract_address };
+
+    let donators_array = array![OWNER(), OTHER_USER(), FUND_MANAGER()].span();
+    let donation_amounts = array![100_u256 * ONE_E18, 200_u256 * ONE_E18, 50_u256 * ONE_E18].span();
+
+    let mut i = 0;
+    while i < donators_array
+        .len() {
+            start_cheat_caller_address_global(*donators_array.at(i));
+            fund_contract.update_receive_donation(*donation_amounts.at(i));
+            stop_cheat_caller_address(contract_address);
+            i += 1;
+        };
+
+    let donators = fund_contract.get_donators().span();
+    assert_eq!(donators.len(), 3, "Should have three donators");
+
+    let mut i = 0;
+    while i < donators
+        .len() {
+            let donator = donators.at(i);
+            assert_eq!(
+                *donator.donator_amount, *donation_amounts.at(i), "Donator {} amount mismatch", i
+            );
+            assert_eq!(
+                *donator.donator_address, *donators_array.at(i), "Donator {} address mismatch", i
+            );
+            assert_eq!(*donator.donator_index, (i + 1).into(), "Donator {} index mismatch", i);
+            i += 1;
+        };
+
+    let additional_donations = array![50_u256 * ONE_E18, 100_u256 * ONE_E18, 25_u256 * ONE_E18]
+        .span();
+
+    let mut i = 0;
+    while i < donators_array
+        .len() {
+            start_cheat_caller_address_global(*donators_array.at(i));
+            fund_contract.update_receive_donation(*additional_donations.at(i));
+            stop_cheat_caller_address(contract_address);
+            i += 1;
+        };
+
+    let donators_after_second_round = fund_contract.get_donators().span();
+    assert_eq!(donators_after_second_round.len(), 3, "Should still have three donators");
+
+    let mut i = 0;
+    while i < donators_after_second_round
+        .len() {
+            let donator = donators_after_second_round.at(i);
+            assert_eq!(
+                *donator.donator_amount,
+                *donation_amounts.at(i) + *additional_donations.at(i),
+                "Donator {} amount mismatch after second round",
+                i
+            );
+            assert_eq!(
+                *donator.donator_address,
+                *donators_array.at(i),
+                "Donator {} address mismatch after second round",
+                i
+            );
+            assert_eq!(
+                *donator.donator_index,
+                (i + 1).into(),
+                "Donator {} index mismatch after second round",
+                i
+            );
+            i += 1;
+        };
 }
